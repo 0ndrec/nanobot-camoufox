@@ -12,6 +12,13 @@ from nanobot.agent.tools.filesystem import EditFileTool, ListDirTool, ReadFileTo
 from nanobot.agent.tools.registry import ToolRegistry
 from nanobot.agent.tools.shell import ExecTool
 from nanobot.agent.tools.web import WebFetchTool, WebSearchTool
+from nanobot.agent.tools.camoufox import (
+    CamoufoxFetchTool,
+    CamoufoxScreenshotTool,
+    CamoufoxActionTool,
+    CamoufoxScriptTool,
+    CamoufoxSessionTool,
+)
 from nanobot.bus.events import InboundMessage
 from nanobot.bus.queue import MessageBus
 from nanobot.config.schema import ExecToolConfig
@@ -108,8 +115,14 @@ class SubagentManager:
             ))
             tools.register(WebSearchTool(api_key=self.brave_api_key, proxy=self.web_proxy))
             tools.register(WebFetchTool(proxy=self.web_proxy))
-            
-            system_prompt = self._build_subagent_prompt()
+            tools.register(CamoufoxFetchTool())
+            tools.register(CamoufoxScreenshotTool())
+            tools.register(CamoufoxActionTool())
+            tools.register(CamoufoxScriptTool())
+            tools.register(CamoufoxSessionTool())
+
+            # Build messages with subagent-specific prompt
+            system_prompt = self._build_subagent_prompt(task)
             messages: list[dict[str, Any]] = [
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": task},
@@ -220,7 +233,24 @@ Summarize this naturally for the user. Keep it brief (1-2 sentences). Do not men
 {time_ctx}
 
 You are a subagent spawned by the main agent to complete a specific task.
-Stay focused on the assigned task. Your final response will be reported back to the main agent.
+
+## Rules
+1. Stay focused - complete only the assigned task, nothing else
+2. Your final response will be reported back to the main agent
+3. Do not initiate conversations or take on side tasks
+4. Be concise but informative in your findings
+
+## What You Can Do
+- Read and write files in the workspace
+- Execute shell commands
+- Search the web and fetch web pages
+- Use stealth browser (Camoufox) to bypass bot-detection, take screenshots, interact with pages, and run scripts
+- Complete the task thoroughly
+
+## What You Cannot Do
+- Send messages directly to users (no message tool available)
+- Spawn other subagents
+- Access the main agent's conversation history
 
 ## Workspace
 {self.workspace}"""]

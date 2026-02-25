@@ -8,6 +8,7 @@ from typing import Any
 import json_repair
 import litellm
 from litellm import acompletion
+from loguru import logger
 
 from nanobot.providers.base import LLMProvider, LLMResponse, ToolCallRequest
 from nanobot.providers.registry import find_by_model, find_gateway
@@ -20,6 +21,51 @@ _ALNUM = string.ascii_letters + string.digits
 def _short_tool_id() -> str:
     """Generate a 9-char alphanumeric ID compatible with all providers (incl. Mistral)."""
     return "".join(secrets.choice(_ALNUM) for _ in range(9))
+
+# Valid finish_reason values accepted by LiteLLM's Choices pydantic model.
+_VALID_FINISH_REASONS = frozenset({
+    "stop", "content_filter", "function_call", "tool_calls", "length",
+    "guardrail_intervened", "eos", "finish_reason_unspecified",
+    "malformed_function_call",
+})
+
+
+def _patch_invalid_finish_reasons() -> None:
+    """Monkey-patch ``convert_to_model_response_object`` so that unknown
+    ``finish_reason`` values (e.g. ``'error'`` returned by OpenRouter when
+    Gemini produces a ``MALFORMED_FUNCTION_CALL``) are mapped to ``'stop'``
+    instead of crashing with a pydantic ``ValidationError``.
+
+    The patch is applied once at import time and is idempotent.
+    """
+    from litellm.litellm_core_utils.llm_response_utils import convert_dict_to_response as _mod
+
+    _original = _mod.convert_to_model_response_object
+
+    if getattr(_original, "_nanobot_patched", False):
+        return  # already patched
+
+    def _patched(response_object=None, **kwargs):
+        if response_object is not None and isinstance(response_object, dict):
+            for choice in response_object.get("choices") or []:
+                if isinstance(choice, dict):
+                    fr = choice.get("finish_reason")
+                    if fr is not None and fr not in _VALID_FINISH_REASONS:
+                        logger.warning(
+                            "Remapping invalid finish_reason '{}' → 'stop' "
+                            "(native_finish_reason={})",
+                            fr,
+                            choice.get("native_finish_reason", "?"),
+                        )
+                        choice["finish_reason"] = "stop"
+        return _original(response_object=response_object, **kwargs)
+
+    _patched._nanobot_patched = True  # type: ignore[attr-defined]
+    _mod.convert_to_model_response_object = _patched
+
+
+# Apply the patch at module load time.
+_patch_invalid_finish_reasons()
 
 
 class LiteLLMProvider(LLMProvider):

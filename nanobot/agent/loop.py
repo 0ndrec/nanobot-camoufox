@@ -20,6 +20,13 @@ from nanobot.agent.tools.filesystem import EditFileTool, ListDirTool, ReadFileTo
 from nanobot.agent.tools.message import MessageTool
 from nanobot.agent.tools.registry import ToolRegistry
 from nanobot.agent.tools.shell import ExecTool
+from nanobot.agent.tools.camoufox import (
+    CamoufoxFetchTool,
+    CamoufoxScreenshotTool,
+    CamoufoxActionTool,
+    CamoufoxScriptTool,
+    CamoufoxSessionTool,
+)
 from nanobot.agent.tools.spawn import SpawnTool
 from nanobot.agent.tools.web import WebFetchTool, WebSearchTool
 from nanobot.bus.events import InboundMessage, OutboundMessage
@@ -125,6 +132,21 @@ class AgentLoop:
         ))
         self.tools.register(WebSearchTool(api_key=self.brave_api_key, proxy=self.web_proxy))
         self.tools.register(WebFetchTool(proxy=self.web_proxy))
+        self.tools.register(CamoufoxFetchTool(
+            progress_callback=self.bus.publish_outbound,
+        ))
+        self.tools.register(CamoufoxScreenshotTool(
+            progress_callback=self.bus.publish_outbound,
+        ))
+        self.tools.register(CamoufoxActionTool(
+            progress_callback=self.bus.publish_outbound,
+        ))
+        self.tools.register(CamoufoxScriptTool(
+            progress_callback=self.bus.publish_outbound,
+        ))
+        self.tools.register(CamoufoxSessionTool(
+            progress_callback=self.bus.publish_outbound,
+        ))
         self.tools.register(MessageTool(send_callback=self.bus.publish_outbound))
         self.tools.register(SpawnTool(manager=self.subagents))
         if self.cron_service:
@@ -158,6 +180,12 @@ class AgentLoop:
             if tool := self.tools.get(name):
                 if hasattr(tool, "set_context"):
                     tool.set_context(channel, chat_id, *([message_id] if name == "message" else []))
+
+        # Set context on all camoufox tools
+        for cfx_name in ("camoufox_fetch", "camoufox_screenshot", "camoufox_action", "camoufox_script", "camoufox_session"):
+            if cfx_tool := self.tools.get(cfx_name):
+                if hasattr(cfx_tool, "set_context"):
+                    cfx_tool.set_context(channel, chat_id)
 
     @staticmethod
     def _strip_think(text: str | None) -> str | None:
