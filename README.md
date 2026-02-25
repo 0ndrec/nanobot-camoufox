@@ -870,6 +870,62 @@ MCP tools are automatically discovered and registered on startup. The LLM can us
 
 
 
+### 🦊 Camoufox (Stealth Browser)
+
+nanobot integrates [Camoufox](https://camoufox.com/) — an anti-detect headless browser built on Firefox with fingerprint spoofing. This lets the agent interact with websites protected by Cloudflare, DataDome, and other bot-detection systems where regular HTTP requests fail.
+
+**Tools provided:**
+
+| Tool | Description |
+|------|-------------|
+| `camoufox_fetch` | Fetch & extract page content (same format as `web_fetch`) |
+| `camoufox_screenshot` | Capture screenshots of protected pages |
+| `camoufox_action` | Interact with pages — click, type, select, scroll, hover, navigate |
+| `camoufox_script` | Execute arbitrary JavaScript on stealth pages |
+| `camoufox_session` | Manage long-lived browser sessions (list / close / close_all) |
+
+All tools share a **session manager** that keeps browser instances alive across sequential tool calls, enabling multi-step workflows (e.g. login → navigate → extract) without re-launching the browser each time. Idle sessions are automatically reaped after 5 minutes.
+
+**Install:**
+
+Camoufox is an optional dependency. Install it with:
+
+```bash
+pip install nanobot-ai[camoufox]
+# or from source:
+pip install -e ".[camoufox]"
+```
+
+Then download the Camoufox browser binary:
+
+```bash
+python -m camoufox fetch
+```
+
+**Usage:**
+
+Once installed, the five `camoufox_*` tools are automatically registered and available to the agent. No configuration needed — just ask the agent to use the stealth browser when regular `web_fetch` fails:
+
+> *"Fetch https://example.com using the stealth browser"*
+
+For multi-step workflows, use `sessionId` to persist browser state:
+
+> *"Open a camoufox session, log in to the site, then scrape the dashboard"*
+
+**Proxy support:**
+
+All Camoufox tools accept an optional `proxy` parameter with automatic GeoIP matching:
+
+```json
+{
+  "proxy": {
+    "server": "http://proxy-host:8080",
+    "username": "user",
+    "password": "pass"
+  }
+}
+```
+
 
 ### Security
 
@@ -1040,7 +1096,7 @@ nanobot/
 │   ├── memory.py   #    Persistent memory
 │   ├── skills.py   #    Skills loader
 │   ├── subagent.py #    Background task execution
-│   └── tools/      #    Built-in tools (incl. spawn)
+│   └── tools/      #    Built-in tools (incl. spawn, camoufox)
 ├── skills/         # 🎯 Bundled skills (github, weather, tmux...)
 ├── channels/       # 📱 Chat channel integrations
 ├── bus/            # 🚌 Message routing
