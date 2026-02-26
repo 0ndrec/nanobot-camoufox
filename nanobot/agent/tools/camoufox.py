@@ -355,6 +355,11 @@ class CamoufoxFetchTool(_CamoufoxProgressMixin, Tool):
                 "type": "string",
                 "description": "CSS selector to wait for before extracting content (e.g. '#main-content')",
             },
+            "selectors": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "List of CSS selectors to extract text from specific elements (e.g. ['.article-title', '#content'])",
+            },
             "headless": {
                 "type": "boolean",
                 "description": "Run browser headless (default true)",
@@ -397,6 +402,7 @@ class CamoufoxFetchTool(_CamoufoxProgressMixin, Tool):
         maxChars: int | None = None,
         waitSeconds: float | None = None,
         waitForSelector: str | None = None,
+        selectors: list[str] | None = None,
         headless: bool = True,
         proxy: dict[str, str] | None = None,
         sessionId: str | None = None,
