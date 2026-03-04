@@ -137,6 +137,7 @@ class AgentLoop:
         ))
         self.tools.register(CamoufoxScreenshotTool(
             progress_callback=self.bus.publish_outbound,
+            workspace=self.workspace,
         ))
         self.tools.register(CamoufoxActionTool(
             progress_callback=self.bus.publish_outbound,

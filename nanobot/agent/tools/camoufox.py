@@ -13,6 +13,9 @@ across sequential tool calls so the agent can perform multi-step workflows
 (login → navigate → extract) without re-launching the browser each time.
 
 Existing WebSearchTool / WebFetchTool in web.py are NOT touched.
+
+Dependencies:
+- pillow (PIL) — used for image optimization (JPEG compression, resizing)
 """
 
 import asyncio
@@ -21,6 +24,7 @@ import html
 import json
 import re
 import time as _time
+from io import BytesIO
 from pathlib import Path
 from typing import Any, Awaitable, Callable
 from urllib.parse import urlparse
@@ -484,9 +488,12 @@ class CamoufoxFetchTool(_CamoufoxProgressMixin, Tool):
                 text = f"# {doc.title()}\n\n{content}" if doc.title() else content
                 extractor = "camoufox+readability"
 
-            truncated = len(text) > max_chars
-            if truncated:
-                text = text[:max_chars]
+            # Truncation logic
+            if text and len(text) > max_chars:
+                text = text[:max_chars] + "\n\n[...truncated — use camoufox_script or smaller maxChars for full content]"
+                truncated = True
+            else:
+                truncated = False
 
             await self._emit_status(f"✅ Fetched {domain} — {len(text):,} chars")
 
@@ -526,8 +533,11 @@ class CamoufoxScreenshotTool(_CamoufoxProgressMixin, Tool):
     name = "camoufox_screenshot"
     description = (
         "Take a screenshot of a URL using a stealth anti-detect browser (Camoufox). "
-        "Returns base64-encoded image. Use when you need to see what a protected page "
-        "looks like, or to capture visual state during a multi-step workflow."
+        "By default: saves to disk and returns lightweight JSON (file path + metadata). "
+        "Set returnBase64=true to get base64-encoded image (larger token usage). "
+        "Images are optimized: JPEG format, quality=75. "
+        "Use when you need to see what a protected page looks like, "
+        "or to capture visual state during a multi-step workflow."
     )
     parameters = {
         "type": "object",
@@ -583,6 +593,11 @@ class CamoufoxScreenshotTool(_CamoufoxProgressMixin, Tool):
                 "type": "string",
                 "description": "Reuse a named browser session.",
             },
+            "returnBase64": {
+                "type": "boolean",
+                "default": False,
+                "description": "Return base64-encoded image (default false). When false, returns lightweight JSON with file path only. Images are optimized: JPEG, quality=75.",
+            },
         },
         "required": [],
     }
@@ -591,8 +606,10 @@ class CamoufoxScreenshotTool(_CamoufoxProgressMixin, Tool):
         self,
         default_wait: float = 2.0,
         progress_callback: Callable[[OutboundMessage], Awaitable[None]] | None = None,
+        workspace: Path | None = None,
     ):
         self.default_wait = default_wait
+        self._workspace = workspace
         self._init_progress(progress_callback)
 
     async def execute(
@@ -607,8 +624,15 @@ class CamoufoxScreenshotTool(_CamoufoxProgressMixin, Tool):
         headless: bool = True,
         proxy: dict[str, str] | None = None,
         sessionId: str | None = None,
+        returnBase64: bool = False,
         **kwargs: Any,
     ) -> str:
+        """Take a screenshot with optimized output.
+        
+        By default (returnBase64=false): always saves to disk, returns lightweight JSON.
+        When returnBase64=true: returns base64-encoded image (larger token usage).
+        Images are optimized: JPEG format, quality=75.
+        """
         wait = waitSeconds if waitSeconds is not None else self.default_wait
 
         if url:
@@ -638,10 +662,8 @@ class CamoufoxScreenshotTool(_CamoufoxProgressMixin, Tool):
                 if wait > 0:
                     await page.wait_for_timeout(int(wait * 1000))
 
-                # Screenshot options
-                ss_kwargs: dict[str, Any] = {"type": format}
-                if format == "jpeg" and quality:
-                    ss_kwargs["quality"] = quality
+                # Screenshot options - always use JPEG for optimization
+                ss_kwargs: dict[str, Any] = {"type": "jpeg", "quality": 75}
                 if fullPage and not selector:
                     ss_kwargs["full_page"] = True
 
@@ -659,27 +681,60 @@ class CamoufoxScreenshotTool(_CamoufoxProgressMixin, Tool):
                 if ephemeral:
                     await _close_ephemeral(page)
 
-            # Optionally save to disk
+            # Optimize image: resize to max 1280×960 and re-encode as JPEG
+            from PIL import Image
+
+            img = Image.open(BytesIO(screenshot_bytes))
+            max_w, max_h = 3840, 2160
+            iw, ih = img.size
+            if iw > max_w or ih > max_h:
+                ratio = min(max_w / iw, max_h / ih)
+                img = img.resize(
+                    (int(iw * ratio), int(ih * ratio)), Image.Resampling.LANCZOS,
+                )
+
+            buf = BytesIO()
+            img.save(buf, format="JPEG", quality=75, optimize=True)
+            optimized_bytes = buf.getvalue()
+
+            # Save to the current session workspace (not global cwd)
+            workspace_dir = self._workspace or Path.cwd()
             if savePath:
-                save_target = Path(savePath)
-                save_target.parent.mkdir(parents=True, exist_ok=True)
-                save_target.write_bytes(screenshot_bytes)
-                await self._emit_status(f"💾 Screenshot saved to {savePath}")
+                save_target = workspace_dir / savePath
+            else:
+                timestamp = _time.strftime("%Y%m%d_%H%M%S", _time.localtime())
+                save_target = workspace_dir / f"screenshots/camoufox_{timestamp}.jpg"
 
-            b64 = base64.b64encode(screenshot_bytes).decode("ascii")
+            save_target.parent.mkdir(parents=True, exist_ok=True)
+            save_target.write_bytes(optimized_bytes)
+            await self._emit_status(f"💾 Screenshot saved to {save_target}")
 
-            await self._emit_status(f"✅ Screenshot captured — {len(screenshot_bytes):,} bytes")
-
-            return json.dumps(
-                {
-                    "url": current_url,
-                    "format": format,
-                    "size_bytes": len(screenshot_bytes),
-                    "saved_to": savePath or None,
-                    "image_base64": b64,
-                },
-                ensure_ascii=False,
-            )
+            # Return lightweight JSON by default, base64 only when requested
+            if returnBase64:
+                b64 = base64.b64encode(optimized_bytes).decode("ascii")
+                await self._emit_status(f"✅ Screenshot captured — {len(optimized_bytes):,} bytes (base64)")
+                return json.dumps(
+                    {
+                        "url": current_url,
+                        "format": "jpeg",
+                        "size_bytes": len(optimized_bytes),
+                        "saved_to": str(save_target),
+                        "image_base64": b64,
+                    },
+                    ensure_ascii=False,
+                )
+            else:
+                await self._emit_status(f"✅ Screenshot captured — {len(optimized_bytes):,} bytes")
+                return json.dumps(
+                    {
+                        "url": current_url,
+                        "format": "jpeg",
+                        "size_bytes": len(optimized_bytes),
+                        "saved_to": str(save_target),
+                        "message": f"Screenshot saved to {save_target}",
+                    },
+                    ensure_ascii=False,
+                )
         except Exception as e:
             await self._emit_status(f"❌ Screenshot failed for {domain}: {e}")
             return json.dumps({"error": str(e), "url": url}, ensure_ascii=False)
@@ -760,13 +815,20 @@ class CamoufoxActionTool(_CamoufoxProgressMixin, Tool):
             },
             "extractAfter": {
                 "type": "boolean",
-                "description": "Extract page content after actions complete (default true)",
+                "default": False,
+                "description": "Extract page content after actions complete (default false)",
             },
             "extractMode": {
                 "type": "string",
                 "enum": ["markdown", "text", "html"],
                 "default": "markdown",
                 "description": "Content extraction mode after actions",
+            },
+            "observationMode": {
+                "type": "string",
+                "enum": ["text", "markdown", "accessibility"],
+                "default": "markdown",
+                "description": "Observation mode for extracting page content: 'text' for plain text, 'markdown' for markdown, 'accessibility' for accessibility tree snapshot",
             },
             "maxChars": {
                 "type": "integer",
@@ -806,8 +868,9 @@ class CamoufoxActionTool(_CamoufoxProgressMixin, Tool):
         self,
         actions: list[dict[str, Any]],
         url: str | None = None,
-        extractAfter: bool = True,
+        extractAfter: bool = False,
         extractMode: str = "markdown",
+        observationMode: str = "markdown",
         maxChars: int | None = None,
         headless: bool = True,
         proxy: dict[str, str] | None = None,
@@ -859,22 +922,28 @@ class CamoufoxActionTool(_CamoufoxProgressMixin, Tool):
                 extracted_text = None
                 if extractAfter:
                     await self._emit_status("📄 Extracting page content…")
-                    raw_html = await page.content()
 
-                    if extractMode == "html":
-                        extracted_text = raw_html
+                    if observationMode == "accessibility":
+                        acc = await page.accessibility.snapshot()
+                        extracted_text = json.dumps(acc, ensure_ascii=False, indent=None)
                     else:
-                        from readability import Document
-                        doc = Document(raw_html)
-                        if extractMode == "markdown":
-                            extracted_text = _to_markdown(doc.summary())
-                        else:
-                            extracted_text = _strip_tags(doc.summary())
-                        if doc.title():
-                            extracted_text = f"# {doc.title()}\n\n{extracted_text}"
+                        raw_html = await page.content()
 
+                        if observationMode == "html" or extractMode == "html":
+                            extracted_text = raw_html
+                        else:
+                            from readability import Document
+                            doc = Document(raw_html)
+                            if observationMode == "markdown" or extractMode == "markdown":
+                                extracted_text = _to_markdown(doc.summary())
+                            else:
+                                extracted_text = _strip_tags(doc.summary())
+                            if doc.title():
+                                extracted_text = f"# {doc.title()}\n\n{extracted_text}"
+
+                    # Truncation logic
                     if extracted_text and len(extracted_text) > max_chars:
-                        extracted_text = extracted_text[:max_chars]
+                        extracted_text = extracted_text[:max_chars] + "\n\n[...truncated — use camoufox_script or smaller maxChars for full content]"
 
             finally:
                 if ephemeral:

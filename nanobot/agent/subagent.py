@@ -116,7 +116,7 @@ class SubagentManager:
             tools.register(WebSearchTool(api_key=self.brave_api_key, proxy=self.web_proxy))
             tools.register(WebFetchTool(proxy=self.web_proxy))
             tools.register(CamoufoxFetchTool())
-            tools.register(CamoufoxScreenshotTool())
+            tools.register(CamoufoxScreenshotTool(workspace=self.workspace))
             tools.register(CamoufoxActionTool())
             tools.register(CamoufoxScriptTool())
             tools.register(CamoufoxSessionTool())
