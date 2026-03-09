@@ -121,7 +121,7 @@ class CamoufoxSessionManager:
         headless: str | bool = 'virtual',
         proxy: dict[str, str] | None = None,
         humanize: bool = True,
-        locale: list[str] | None = None,
+        locale: str | None = None,
     ) -> Any:
         """Return the Playwright *Page* for *session_id*, creating if needed.
 
@@ -141,7 +141,7 @@ class CamoufoxSessionManager:
             "humanize": humanize,
         }
         if locale:
-            cfx_kwargs["locale"] = ",".join(locale) if isinstance(locale, list) else locale
+            cfx_kwargs["locale"] = locale
         if proxy:
             cfx_kwargs["proxy"] = proxy
             cfx_kwargs["geoip"] = True
@@ -279,7 +279,7 @@ async def _resolve_page(
     headless: str | bool = 'virtual',
     proxy: dict[str, str] | None = None,
     humanize: bool = True,
-    locale: list[str] | None = None,
+    locale: str | None = None,
 ) -> tuple[Any, bool]:
     """Return (page, is_ephemeral).
 
@@ -297,7 +297,7 @@ async def _resolve_page(
 
     cfx_kwargs: dict[str, Any] = {"headless": headless, "block_webrtc": True, "humanize": humanize}
     if locale:
-        cfx_kwargs["locale"] = ",".join(locale) if isinstance(locale, list) else locale
+        cfx_kwargs["locale"] = locale
     if proxy:
         cfx_kwargs["proxy"] = proxy
         cfx_kwargs["geoip"] = True
@@ -381,21 +381,25 @@ class CamoufoxFetchTool(_CamoufoxProgressMixin, Tool):
             "humanize": {
                 "type": "boolean",
                 "default": True,
-                "description": "Enable human-like behavior",
+                "description": "Enable human-like behavior. Set to false to disable for debugging/testing.",
             },
             "locale": {
-                "type": "array",
-                "items": {"type": "string"},
-                "default": ["he-IL", "en-US"],
-                "description": "List of locales to use",
+                "type": "string",
+                "default": "he-IL,en-US",
+                "description": "Comma-separated locale string, e.g. 'he-IL,en-US' or 'en-US'",
             },
             "proxy": {
                 "type": "object",
-                "description": 'Playwright proxy dict, e.g. {"server": "http://host:port"}',
+                "description": (
+                    "Proxy configuration. Examples: "
+                    "HTTP proxy: {\"server\": \"http://host:port\"}, "
+                    "with auth: {\"server\": \"http://host:port\", \"username\": \"user\", \"password\": \"pass\"}, "
+                    "SOCKS5: {\"server\": \"socks5://host:port\"}"
+                ),
                 "properties": {
-                    "server": {"type": "string"},
-                    "username": {"type": "string"},
-                    "password": {"type": "string"},
+                    "server": {"type": "string", "description": "Proxy server URL, e.g. 'http://host:port' or 'socks5://host:port'"},
+                    "username": {"type": "string", "description": "Proxy username (optional)"},
+                    "password": {"type": "string", "description": "Proxy password (optional)"},
                 },
             },
             "sessionId": {
@@ -431,7 +435,7 @@ class CamoufoxFetchTool(_CamoufoxProgressMixin, Tool):
         headless: str | bool = 'virtual',
         proxy: dict[str, str] | None = None,
         humanize: bool = True,
-        locale: list[str] | None = None,
+        locale: str | None = None,
         sessionId: str | None = None,
         **kwargs: Any,
     ) -> str:
@@ -607,21 +611,25 @@ class CamoufoxScreenshotTool(_CamoufoxProgressMixin, Tool):
             "humanize": {
                 "type": "boolean",
                 "default": True,
-                "description": "Enable human-like behavior",
+                "description": "Enable human-like behavior. Set to false to disable for debugging/testing.",
             },
             "locale": {
-                "type": "array",
-                "items": {"type": "string"},
-                "default": ["he-IL", "en-US"],
-                "description": "List of locales to use",
+                "type": "string",
+                "default": "he-IL,en-US",
+                "description": "Comma-separated locale string, e.g. 'he-IL,en-US' or 'en-US'",
             },
             "proxy": {
                 "type": "object",
-                "description": 'Playwright proxy dict',
+                "description": (
+                    "Proxy configuration. Examples: "
+                    "HTTP proxy: {\"server\": \"http://host:port\"}, "
+                    "with auth: {\"server\": \"http://host:port\", \"username\": \"user\", \"password\": \"pass\"}, "
+                    "SOCKS5: {\"server\": \"socks5://host:port\"}"
+                ),
                 "properties": {
-                    "server": {"type": "string"},
-                    "username": {"type": "string"},
-                    "password": {"type": "string"},
+                    "server": {"type": "string", "description": "Proxy server URL, e.g. 'http://host:port' or 'socks5://host:port'"},
+                    "username": {"type": "string", "description": "Proxy username (optional)"},
+                    "password": {"type": "string", "description": "Proxy password (optional)"},
                 },
             },
             "sessionId": {
@@ -659,7 +667,7 @@ class CamoufoxScreenshotTool(_CamoufoxProgressMixin, Tool):
         headless: str | bool = 'virtual',
         proxy: dict[str, str] | None = None,
         humanize: bool = True,
-        locale: list[str] | None = None,
+        locale: str | None = None,
         sessionId: str | None = None,
         returnBase64: bool = False,
         **kwargs: Any,
@@ -808,22 +816,36 @@ class CamoufoxActionTool(_CamoufoxProgressMixin, Tool):
             },
             "actions": {
                 "type": "array",
-                "description": "Ordered list of actions to perform on the page.",
+                "description": (
+                    "Ordered list of actions to perform on the page. "
+                    "Each action is an object with an 'action' field and optional fields. "
+                    "After all actions complete, set extractAfter=true (top-level param) to extract page content."
+                ),
                 "items": {
                     "type": "object",
                     "properties": {
                         "action": {
                             "type": "string",
                             "enum": ["click", "type", "select", "scroll", "wait", "hover", "navigate", "press_key"],
-                            "description": "Action type",
+                            "description": (
+                                "Action type. Options: "
+                                "'click' — click element (requires selector); "
+                                "'type' — fill input (requires selector + text); "
+                                "'select' — choose <select> option (requires selector + value); "
+                                "'scroll' — scroll page (optional direction/amount); "
+                                "'wait' — pause execution (optional seconds); "
+                                "'hover' — hover over element (requires selector); "
+                                "'navigate' — go to URL (requires text=URL); "
+                                "'press_key' — press keyboard key (requires text=key name, e.g. 'Enter')"
+                            ),
                         },
                         "selector": {
                             "type": "string",
-                            "description": "CSS selector for the target element (for click, type, select, hover)",
+                            "description": "CSS selector for the target element (required for click, type, select, hover)",
                         },
                         "text": {
                             "type": "string",
-                            "description": "Text to type (for 'type' action) or URL (for 'navigate') or key name (for 'press_key')",
+                            "description": "Text to type (for 'type' action), URL to navigate to (for 'navigate'), or key name (for 'press_key', e.g. 'Enter', 'Tab', 'Escape')",
                         },
                         "value": {
                             "type": "string",
@@ -844,7 +866,7 @@ class CamoufoxActionTool(_CamoufoxProgressMixin, Tool):
                         },
                         "waitForSelector": {
                             "type": "string",
-                            "description": "CSS selector to wait for after this action completes",
+                            "description": "CSS selector to wait for after this action completes (e.g. wait for a modal to appear after click)",
                         },
                     },
                     "required": ["action"],
@@ -853,7 +875,11 @@ class CamoufoxActionTool(_CamoufoxProgressMixin, Tool):
             "extractAfter": {
                 "type": "boolean",
                 "default": False,
-                "description": "Extract page content after actions complete (default false)",
+                "description": (
+                    "Extract page content after all actions complete (default false). "
+                    "When true, returns 'text' field with page content in extractMode format. "
+                    "Use observationMode to control the format: 'markdown' (default), 'text', or 'accessibility'."
+                ),
             },
             "extractMode": {
                 "type": "string",
@@ -880,21 +906,25 @@ class CamoufoxActionTool(_CamoufoxProgressMixin, Tool):
             "humanize": {
                 "type": "boolean",
                 "default": True,
-                "description": "Enable human-like behavior",
+                "description": "Enable human-like behavior. Set to false to disable for debugging/testing.",
             },
             "locale": {
-                "type": "array",
-                "items": {"type": "string"},
-                "default": ["he-IL", "en-US"],
-                "description": "List of locales to use",
+                "type": "string",
+                "default": "he-IL,en-US",
+                "description": "Comma-separated locale string, e.g. 'he-IL,en-US' or 'en-US'",
             },
             "proxy": {
                 "type": "object",
-                "description": 'Playwright proxy dict',
+                "description": (
+                    "Proxy configuration. Examples: "
+                    "HTTP proxy: {\"server\": \"http://host:port\"}, "
+                    "with auth: {\"server\": \"http://host:port\", \"username\": \"user\", \"password\": \"pass\"}, "
+                    "SOCKS5: {\"server\": \"socks5://host:port\"}"
+                ),
                 "properties": {
-                    "server": {"type": "string"},
-                    "username": {"type": "string"},
-                    "password": {"type": "string"},
+                    "server": {"type": "string", "description": "Proxy server URL, e.g. 'http://host:port' or 'socks5://host:port'"},
+                    "username": {"type": "string", "description": "Proxy username (optional)"},
+                    "password": {"type": "string", "description": "Proxy password (optional)"},
                 },
             },
             "sessionId": {
@@ -924,7 +954,7 @@ class CamoufoxActionTool(_CamoufoxProgressMixin, Tool):
         headless: str | bool = 'virtual',
         proxy: dict[str, str] | None = None,
         humanize: bool = True,
-        locale: list[str] | None = None,
+        locale: str | None = None,
         sessionId: str | None = None,
         **kwargs: Any,
     ) -> str:
@@ -993,8 +1023,10 @@ class CamoufoxActionTool(_CamoufoxProgressMixin, Tool):
                                 extracted_text = f"# {doc.title()}\n\n{extracted_text}"
 
                     # Truncation logic
+                    truncated = False
                     if extracted_text and len(extracted_text) > max_chars:
-                        extracted_text = extracted_text[:max_chars] + "\n\n[...truncated — use camoufox_script or smaller maxChars for full content]"
+                        extracted_text = extracted_text[:max_chars] + "\n\n[...truncated — use camoufox_script or increase maxChars for full content]"
+                        truncated = True
 
             finally:
                 if ephemeral:
@@ -1011,6 +1043,7 @@ class CamoufoxActionTool(_CamoufoxProgressMixin, Tool):
             if extracted_text is not None:
                 response["text"] = extracted_text
                 response["length"] = len(extracted_text)
+                response["truncated"] = truncated
 
             return json.dumps(response, ensure_ascii=False)
 
@@ -1031,8 +1064,19 @@ class CamoufoxActionTool(_CamoufoxProgressMixin, Tool):
                 if not selector:
                     raise ValueError("'click' requires a 'selector'")
                 await self._emit_status(f"🖱️ Clicking '{selector}'…")
-                await page.click(selector, timeout=10_000)
+                # Use expect_navigation to handle pages that navigate after click
+                try:
+                    async with page.expect_navigation(wait_until="domcontentloaded", timeout=10_000):
+                        await page.click(selector, timeout=10_000)
+                except Exception:
+                    # Navigation may not happen (e.g. JS-only click, modal open, etc.)
+                    # Try a plain click as fallback — if the element was clicked, that's fine
+                    try:
+                        await page.click(selector, timeout=5_000)
+                    except Exception:
+                        pass  # Element was already clicked before navigation started
                 result["selector"] = selector
+                result["url_after"] = page.url
 
             elif action_type == "type":
                 if not selector:
@@ -1146,21 +1190,25 @@ class CamoufoxScriptTool(_CamoufoxProgressMixin, Tool):
             "humanize": {
                 "type": "boolean",
                 "default": True,
-                "description": "Enable human-like behavior",
+                "description": "Enable human-like behavior. Set to false to disable for debugging/testing.",
             },
             "locale": {
-                "type": "array",
-                "items": {"type": "string"},
-                "default": ["he-IL", "en-US"],
-                "description": "List of locales to use",
+                "type": "string",
+                "default": "he-IL,en-US",
+                "description": "Comma-separated locale string, e.g. 'he-IL,en-US' or 'en-US'",
             },
             "proxy": {
                 "type": "object",
-                "description": 'Playwright proxy dict',
+                "description": (
+                    "Proxy configuration. Examples: "
+                    "HTTP proxy: {\"server\": \"http://host:port\"}, "
+                    "with auth: {\"server\": \"http://host:port\", \"username\": \"user\", \"password\": \"pass\"}, "
+                    "SOCKS5: {\"server\": \"socks5://host:port\"}"
+                ),
                 "properties": {
-                    "server": {"type": "string"},
-                    "username": {"type": "string"},
-                    "password": {"type": "string"},
+                    "server": {"type": "string", "description": "Proxy server URL, e.g. 'http://host:port' or 'socks5://host:port'"},
+                    "username": {"type": "string", "description": "Proxy username (optional)"},
+                    "password": {"type": "string", "description": "Proxy password (optional)"},
                 },
             },
             "sessionId": {
@@ -1187,7 +1235,7 @@ class CamoufoxScriptTool(_CamoufoxProgressMixin, Tool):
         headless: str | bool = 'virtual',
         proxy: dict[str, str] | None = None,
         humanize: bool = True,
-        locale: list[str] | None = None,
+        locale: str | None = None,
         sessionId: str | None = None,
         **kwargs: Any,
     ) -> str:
