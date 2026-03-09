@@ -141,7 +141,7 @@ class CamoufoxSessionManager:
             "humanize": humanize,
         }
         if locale:
-            cfx_kwargs["locale"] = locale
+            cfx_kwargs["locale"] = ",".join(locale) if isinstance(locale, list) else locale
         if proxy:
             cfx_kwargs["proxy"] = proxy
             cfx_kwargs["geoip"] = True
@@ -297,7 +297,7 @@ async def _resolve_page(
 
     cfx_kwargs: dict[str, Any] = {"headless": headless, "block_webrtc": True, "humanize": humanize}
     if locale:
-        cfx_kwargs["locale"] = locale
+        cfx_kwargs["locale"] = ",".join(locale) if isinstance(locale, list) else locale
     if proxy:
         cfx_kwargs["proxy"] = proxy
         cfx_kwargs["geoip"] = True
