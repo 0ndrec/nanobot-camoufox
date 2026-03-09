@@ -118,8 +118,10 @@ class CamoufoxSessionManager:
         self,
         session_id: str,
         *,
-        headless: bool = True,
+        headless: str | bool = 'virtual',
         proxy: dict[str, str] | None = None,
+        humanize: bool = True,
+        locale: list[str] | None = None,
     ) -> Any:
         """Return the Playwright *Page* for *session_id*, creating if needed.
 
@@ -136,7 +138,10 @@ class CamoufoxSessionManager:
         cfx_kwargs: dict[str, Any] = {
             "headless": headless,
             "block_webrtc": True,
+            "humanize": humanize,
         }
+        if locale:
+            cfx_kwargs["locale"] = locale
         if proxy:
             cfx_kwargs["proxy"] = proxy
             cfx_kwargs["geoip"] = True
@@ -271,8 +276,10 @@ class _CamoufoxProgressMixin:
 
 async def _resolve_page(
     session_id: str | None,
-    headless: bool,
-    proxy: dict[str, str] | None,
+    headless: str | bool = 'virtual',
+    proxy: dict[str, str] | None = None,
+    humanize: bool = True,
+    locale: list[str] | None = None,
 ) -> tuple[Any, bool]:
     """Return (page, is_ephemeral).
 
@@ -282,23 +289,25 @@ async def _resolve_page(
     """
     if session_id:
         page = await _session_manager.get_or_create(
-            session_id, headless=headless, proxy=proxy,
+            session_id, headless=headless, proxy=proxy, humanize=humanize, locale=locale,
         )
         return page, False
 
     from camoufox.async_api import AsyncCamoufox
 
-    cfx_kwargs: dict[str, Any] = {"headless": headless, "block_webrtc": True}
+    cfx_kwargs: dict[str, Any] = {"headless": headless, "block_webrtc": True, "humanize": humanize}
+    if locale:
+        cfx_kwargs["locale"] = locale
     if proxy:
         cfx_kwargs["proxy"] = proxy
         cfx_kwargs["geoip"] = True
 
     browser = await AsyncCamoufox(**cfx_kwargs).__aenter__()
     page = await browser.new_page()
+
     # Stash browser ref on page so caller can close it
     page._cfx_browser = browser  # type: ignore[attr-defined]
     return page, True
-
 
 async def _close_ephemeral(page: Any) -> None:
     """Close a page that was opened without a session."""
@@ -365,8 +374,20 @@ class CamoufoxFetchTool(_CamoufoxProgressMixin, Tool):
                 "description": "List of CSS selectors to extract text from specific elements (e.g. ['.article-title', '#content'])",
             },
             "headless": {
+                "type": ["string", "boolean"],
+                "default": "virtual",
+                "description": "Headless mode: true, false, or 'virtual'",
+            },
+            "humanize": {
                 "type": "boolean",
-                "description": "Run browser headless (default true)",
+                "default": True,
+                "description": "Enable human-like behavior",
+            },
+            "locale": {
+                "type": "array",
+                "items": {"type": "string"},
+                "default": ["he-IL", "en-US"],
+                "description": "List of locales to use",
             },
             "proxy": {
                 "type": "object",
@@ -407,8 +428,10 @@ class CamoufoxFetchTool(_CamoufoxProgressMixin, Tool):
         waitSeconds: float | None = None,
         waitForSelector: str | None = None,
         selectors: list[str] | None = None,
-        headless: bool = True,
+        headless: str | bool = 'virtual',
         proxy: dict[str, str] | None = None,
+        humanize: bool = True,
+        locale: list[str] | None = None,
         sessionId: str | None = None,
         **kwargs: Any,
     ) -> str:
@@ -442,7 +465,7 @@ class CamoufoxFetchTool(_CamoufoxProgressMixin, Tool):
         try:
             await self._emit_status(f"🦊 Launching stealth browser for {domain}…")
 
-            page, ephemeral = await _resolve_page(sessionId, headless, proxy)
+            page, ephemeral = await _resolve_page(sessionId, headless, proxy, humanize, locale)
 
             try:
                 await self._emit_status(f"🌐 Navigating to {domain}…")
@@ -577,8 +600,20 @@ class CamoufoxScreenshotTool(_CamoufoxProgressMixin, Tool):
                 "description": "Optional file path to save the screenshot to disk (relative to workspace).",
             },
             "headless": {
+                "type": ["string", "boolean"],
+                "default": "virtual",
+                "description": "Headless mode: true, false, or 'virtual'",
+            },
+            "humanize": {
                 "type": "boolean",
-                "description": "Run browser headless (default true)",
+                "default": True,
+                "description": "Enable human-like behavior",
+            },
+            "locale": {
+                "type": "array",
+                "items": {"type": "string"},
+                "default": ["he-IL", "en-US"],
+                "description": "List of locales to use",
             },
             "proxy": {
                 "type": "object",
@@ -621,8 +656,10 @@ class CamoufoxScreenshotTool(_CamoufoxProgressMixin, Tool):
         format: str = "png",
         quality: int | None = None,
         savePath: str | None = None,
-        headless: bool = True,
+        headless: str | bool = 'virtual',
         proxy: dict[str, str] | None = None,
+        humanize: bool = True,
+        locale: list[str] | None = None,
         sessionId: str | None = None,
         returnBase64: bool = False,
         **kwargs: Any,
@@ -653,7 +690,7 @@ class CamoufoxScreenshotTool(_CamoufoxProgressMixin, Tool):
         try:
             await self._emit_status(f"📸 Preparing screenshot for {domain}…")
 
-            page, ephemeral = await _resolve_page(sessionId, headless, proxy)
+            page, ephemeral = await _resolve_page(sessionId, headless, proxy, humanize, locale)
 
             try:
                 if url:
@@ -836,8 +873,20 @@ class CamoufoxActionTool(_CamoufoxProgressMixin, Tool):
                 "description": "Max characters to return (default 30 000)",
             },
             "headless": {
+                "type": ["string", "boolean"],
+                "default": "virtual",
+                "description": "Headless mode: true, false, or 'virtual'",
+            },
+            "humanize": {
                 "type": "boolean",
-                "description": "Run browser headless (default true)",
+                "default": True,
+                "description": "Enable human-like behavior",
+            },
+            "locale": {
+                "type": "array",
+                "items": {"type": "string"},
+                "default": ["he-IL", "en-US"],
+                "description": "List of locales to use",
             },
             "proxy": {
                 "type": "object",
@@ -872,8 +921,10 @@ class CamoufoxActionTool(_CamoufoxProgressMixin, Tool):
         extractMode: str = "markdown",
         observationMode: str = "markdown",
         maxChars: int | None = None,
-        headless: bool = True,
+        headless: str | bool = 'virtual',
         proxy: dict[str, str] | None = None,
+        humanize: bool = True,
+        locale: list[str] | None = None,
         sessionId: str | None = None,
         **kwargs: Any,
     ) -> str:
@@ -895,7 +946,7 @@ class CamoufoxActionTool(_CamoufoxProgressMixin, Tool):
         try:
             await self._emit_status(f"🦊 Preparing stealth browser for actions…")
 
-            page, ephemeral = await _resolve_page(sessionId, headless, proxy)
+            page, ephemeral = await _resolve_page(sessionId, headless, proxy, humanize, locale)
             action_results: list[dict[str, Any]] = []
 
             try:
@@ -1088,8 +1139,20 @@ class CamoufoxScriptTool(_CamoufoxProgressMixin, Tool):
                 "description": "Seconds to wait after page load before running script (default 2)",
             },
             "headless": {
+                "type": ["string", "boolean"],
+                "default": "virtual",
+                "description": "Headless mode: true, false, or 'virtual'",
+            },
+            "humanize": {
                 "type": "boolean",
-                "description": "Run browser headless (default true)",
+                "default": True,
+                "description": "Enable human-like behavior",
+            },
+            "locale": {
+                "type": "array",
+                "items": {"type": "string"},
+                "default": ["he-IL", "en-US"],
+                "description": "List of locales to use",
             },
             "proxy": {
                 "type": "object",
@@ -1121,8 +1184,10 @@ class CamoufoxScriptTool(_CamoufoxProgressMixin, Tool):
         script: str,
         url: str | None = None,
         waitSeconds: float | None = None,
-        headless: bool = True,
+        headless: str | bool = 'virtual',
         proxy: dict[str, str] | None = None,
+        humanize: bool = True,
+        locale: list[str] | None = None,
         sessionId: str | None = None,
         **kwargs: Any,
     ) -> str:
@@ -1146,7 +1211,7 @@ class CamoufoxScriptTool(_CamoufoxProgressMixin, Tool):
         try:
             await self._emit_status(f"🦊 Preparing stealth browser for script on {domain}…")
 
-            page, ephemeral = await _resolve_page(sessionId, headless, proxy)
+            page, ephemeral = await _resolve_page(sessionId, headless, proxy, humanize, locale)
 
             try:
                 if url:
