@@ -1,10 +1,13 @@
 """LiteLLM provider implementation for multi-provider support."""
 
+
 import hashlib
 import os
 import secrets
 import string
 from typing import Any
+
+os.environ["LITELLM_LOCAL_MODEL_COST_MAP"] = "True"
 
 import json_repair
 import litellm
@@ -104,6 +107,10 @@ class LiteLLMProvider(LLMProvider):
 
         # Disable LiteLLM logging noise
         litellm.suppress_debug_info = True
+        # Disable remote cost map fetching to avoid network errors in restricted environments
+        litellm.disable_cost_map_telemetry = True
+        # Disable all telemetry and remote checks
+        os.environ["LITELLM_LOCAL_RESOURCES"] = "True"
         # Drop unsupported parameters for providers (e.g., gpt-5 rejects some params)
         litellm.drop_params = True
 
