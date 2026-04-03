@@ -1,13 +1,10 @@
 """LiteLLM provider implementation for multi-provider support."""
 
-
 import hashlib
 import os
 import secrets
 import string
 from typing import Any
-
-os.environ["LITELLM_LOCAL_MODEL_COST_MAP"] = "True"
 
 import json_repair
 import litellm
@@ -25,51 +22,6 @@ _ALNUM = string.ascii_letters + string.digits
 def _short_tool_id() -> str:
     """Generate a 9-char alphanumeric ID compatible with all providers (incl. Mistral)."""
     return "".join(secrets.choice(_ALNUM) for _ in range(9))
-
-# Valid finish_reason values accepted by LiteLLM's Choices pydantic model.
-_VALID_FINISH_REASONS = frozenset({
-    "stop", "content_filter", "function_call", "tool_calls", "length",
-    "guardrail_intervened", "eos", "finish_reason_unspecified",
-    "malformed_function_call",
-})
-
-
-def _patch_invalid_finish_reasons() -> None:
-    """Monkey-patch ``convert_to_model_response_object`` so that unknown
-    ``finish_reason`` values (e.g. ``'error'`` returned by OpenRouter when
-    Gemini produces a ``MALFORMED_FUNCTION_CALL``) are mapped to ``'stop'``
-    instead of crashing with a pydantic ``ValidationError``.
-
-    The patch is applied once at import time and is idempotent.
-    """
-    from litellm.litellm_core_utils.llm_response_utils import convert_dict_to_response as _mod
-
-    _original = _mod.convert_to_model_response_object
-
-    if getattr(_original, "_nanobot_patched", False):
-        return  # already patched
-
-    def _patched(response_object=None, **kwargs):
-        if response_object is not None and isinstance(response_object, dict):
-            for choice in response_object.get("choices") or []:
-                if isinstance(choice, dict):
-                    fr = choice.get("finish_reason")
-                    if fr is not None and fr not in _VALID_FINISH_REASONS:
-                        logger.warning(
-                            "Remapping invalid finish_reason '{}' → 'stop' "
-                            "(native_finish_reason={})",
-                            fr,
-                            choice.get("native_finish_reason", "?"),
-                        )
-                        choice["finish_reason"] = "stop"
-        return _original(response_object=response_object, **kwargs)
-
-    _patched._nanobot_patched = True  # type: ignore[attr-defined]
-    _mod.convert_to_model_response_object = _patched
-
-
-# Apply the patch at module load time.
-_patch_invalid_finish_reasons()
 
 
 class LiteLLMProvider(LLMProvider):
@@ -107,12 +59,10 @@ class LiteLLMProvider(LLMProvider):
 
         # Disable LiteLLM logging noise
         litellm.suppress_debug_info = True
-        # Disable remote cost map fetching to avoid network errors in restricted environments
-        litellm.disable_cost_map_telemetry = True
-        # Disable all telemetry and remote checks
-        os.environ["LITELLM_LOCAL_RESOURCES"] = "True"
         # Drop unsupported parameters for providers (e.g., gpt-5 rejects some params)
         litellm.drop_params = True
+
+        self._langsmith_enabled = bool(os.getenv("LANGSMITH_API_KEY"))
 
     def _setup_env(self, api_key: str, api_base: str | None, model: str) -> None:
         """Set environment variables based on detected provider."""
@@ -141,11 +91,10 @@ class LiteLLMProvider(LLMProvider):
     def _resolve_model(self, model: str) -> str:
         """Resolve model name by applying provider/gateway prefixes."""
         if self._gateway:
-            # Gateway mode: apply gateway prefix, skip provider-specific prefixes
             prefix = self._gateway.litellm_prefix
             if self._gateway.strip_model_prefix:
                 model = model.split("/")[-1]
-            if prefix and not model.startswith(f"{prefix}/"):
+            if prefix:
                 model = f"{prefix}/{model}"
             return model
 
@@ -266,6 +215,7 @@ class LiteLLMProvider(LLMProvider):
         max_tokens: int = 4096,
         temperature: float = 0.7,
         reasoning_effort: str | None = None,
+        tool_choice: str | dict[str, Any] | None = None,
     ) -> LLMResponse:
         """
         Send a chat completion request via LiteLLM.
@@ -298,8 +248,14 @@ class LiteLLMProvider(LLMProvider):
             "temperature": temperature,
         }
 
+        if self._gateway:
+            kwargs.update(self._gateway.litellm_kwargs)
+
         # Apply model-specific overrides (e.g. kimi-k2.5 temperature)
         self._apply_model_overrides(model, kwargs)
+
+        if self._langsmith_enabled:
+            kwargs.setdefault("callbacks", []).append("langsmith")
 
         # Pass api_key directly — more reliable than env vars alone
         if self.api_key:
@@ -319,7 +275,7 @@ class LiteLLMProvider(LLMProvider):
         
         if tools:
             kwargs["tools"] = tools
-            kwargs["tool_choice"] = "auto"
+            kwargs["tool_choice"] = tool_choice or "auto"
 
         try:
             response = await acompletion(**kwargs)
@@ -361,10 +317,17 @@ class LiteLLMProvider(LLMProvider):
             if isinstance(args, str):
                 args = json_repair.loads(args)
 
+            provider_specific_fields = getattr(tc, "provider_specific_fields", None) or None
+            function_provider_specific_fields = (
+                getattr(tc.function, "provider_specific_fields", None) or None
+            )
+
             tool_calls.append(ToolCallRequest(
                 id=_short_tool_id(),
                 name=tc.function.name,
                 arguments=args,
+                provider_specific_fields=provider_specific_fields,
+                function_provider_specific_fields=function_provider_specific_fields,
             ))
 
         usage = {}
